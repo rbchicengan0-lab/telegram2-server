@@ -97,7 +97,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Сервер запущен на порту ${PORT}`);
+const PORT = process.env.PORT || 10000; // Render использует 10000 по умолчанию
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Сервер пашет на порту ${PORT}`);
 });
