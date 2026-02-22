@@ -1,58 +1,103 @@
 const express = require('express');
-const fs = require('fs');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors'); // 1. Подключаем модуль cors
+const cors = require('cors');
+const fs = require('fs');
 
 const app = express();
-app.use(cors()); // 2. РАЗРЕШАЕМ серверу принимать запросы с любых адресов
+app.use(cors());
 
 const server = http.createServer(app);
-const io = new Server(server, { 
-    cors: { 
-        origin: "*", // 3. Разрешаем Socket.io работать с любым клиентом
+const io = new Server(server, {
+    cors: {
+        origin: "*",
         methods: ["GET", "POST"]
-    } 
+    }
 });
 
 const DB_FILE = './database.json';
 
-// --- Дальше идет твой остальной код базы данных ---
-
+// Загрузка базы данных
 let db = { users: [], messages: [] };
 if (fs.existsSync(DB_FILE)) {
-    db = JSON.parse(fs.readFileSync(DB_FILE));
+    try {
+        db = JSON.parse(fs.readFileSync(DB_FILE));
+    } catch (e) {
+        console.log("Ошибка чтения базы, создаем новую.");
+    }
 }
 
-const saveDB = () => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+const saveDB = () => {
+    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+};
 
 io.on('connection', (socket) => {
-    console.log('Юзер в сети:', socket.id);
+    console.log('Пользователь подключился:', socket.id);
 
-    // Логика регистрации, входа и сообщений (оставляем как была)
-    socket.on('register', (data) => {
-        const exists = db.users.find(u => u.nick === data.nick || u.email === data.email);
+    // РЕГИСТРАЦИЯ
+    socket.on('register', (userData) => {
+        const exists = db.users.find(u => u.email === userData.email || u.nick === userData.nick);
         if (exists) {
-            socket.emit('auth_error', 'Ник или почта уже заняты!');
+            socket.emit('auth_error', 'Email или Ник уже заняты!');
         } else {
-            db.users.push(data);
+            db.users.push(userData);
             saveDB();
-            socket.emit('auth_success', data);
+            socket.emit('login_ok', userData);
         }
     });
 
+    // ВХОД
     socket.on('login', (data) => {
         const user = db.users.find(u => u.email === data.email && u.pass === data.pass);
-        if (!user) socket.emit('auth_error', 'Ошибка входа!');
-        else socket.emit('login_ok', user);
+        if (user) {
+            socket.emit('login_ok', user);
+        } else {
+            socket.emit('auth_error', 'Неверный email или пароль!');
+        }
     });
 
+    // СТРОГИЙ ПОИСК ЮЗЕРА (только существующие)
+    socket.on('find_user', (nick) => {
+        const found = db.users.find(u => u.nick.toLowerCase() === nick.toLowerCase());
+        if (found) {
+            socket.emit('user_found', { 
+                nick: found.nick, 
+                avatar: found.avatar, 
+                fio: found.fio 
+            });
+        }
+    });
+
+    // ОБНОВЛЕНИЕ ПРОФИЛЯ
+    socket.on('update_profile', (updatedUser) => {
+        const index = db.users.findIndex(u => u.email === updatedUser.email);
+        if (index !== -1) {
+            db.users[index] = { ...db.users[index], ...updatedUser };
+            saveDB();
+        }
+    });
+
+    // ОТПРАВКА СООБЩЕНИЯ
     socket.on('send_msg', (msg) => {
-        db.messages.push(msg);
+        // Добавляем время и сохраняем в историю
+        const fullMsg = { 
+            ...msg, 
+            id: Date.now(),
+            time: new Date().toLocaleTimeString() 
+        };
+        db.messages.push(fullMsg);
         saveDB();
-        io.emit('new_msg', msg);
+
+        // Рассылаем всем (клиент сам отфильтрует, кому это нужно)
+        io.emit('new_msg', fullMsg);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Пользователь отключился');
     });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Сервер пашет на порту ${PORT}`));
+server.listen(PORT, () => {
+    console.log(`Сервер запущен на порту ${PORT}`);
+});
